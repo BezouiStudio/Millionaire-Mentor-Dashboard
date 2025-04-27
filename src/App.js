@@ -653,10 +653,14 @@ const DailyHabitTracker = ({ userId }) => {
         />
         <button
           onClick={addHabit}
-          className="bg-gray-200 text-[#333333] px-4 py-2 rounded-md hover:bg-gray-300 transition duration-200 text-sm disabled:opacity-50"
+          className="bg-gray-200 text-[#333333] px-4 py-2 rounded-md hover:bg-gray-300 transition duration-200 text-sm disabled:opacity-50 flex items-center justify-center" // Added flex classes for centering icon
           disabled={!newHabitName.trim() || editingHabitId !== null} // Disable if input is empty or editing
+          title="Add Habit" // Added title for accessibility
         >
-          Add Habit
+            {/* Right Arrow Icon */}
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L12.586 11H5a1 1 0 110-2h7.586l-2.293-2.293a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
         </button>
       </div>
 
@@ -1123,10 +1127,14 @@ const SkillHoursLog = ({ userId }) => {
                 />
                 <button
                     onClick={addSkill}
-                    className="bg-gray-200 text-[#333333] px-4 py-2 rounded-md hover:bg-gray-300 transition duration-200 text-sm disabled:opacity-50"
+                    className="bg-gray-200 text-[#333333] px-4 py-2 rounded-md hover:bg-gray-300 transition duration-200 text-sm disabled:opacity-50 flex items-center justify-center" // Added flex classes for centering icon
                     disabled={!newSkillName.trim() || editingSkillId !== null || loadingSkills}
+                    title="Add Skill" // Added title for accessibility
                 >
-                    Add Skill
+                    {/* Right Arrow Icon */}
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M10.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L12.586 11H5a1 1 0 110-2h7.586l-2.293-2.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
                 </button>
             </div>
             {addSkillError && <p className="text-red-500 text-sm mt-2">{addSkillError}</p>}

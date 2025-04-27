@@ -837,7 +837,7 @@ const IncomeExpenseFeed = ({ userId }) => {
               <div key={t.id} className="flex justify-between items-center py-2 border-b border-gray-100 last:border-b-0"> {/* Added padding and border */}
                 <div>
                     <span className={`font-bold ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>{t.type === 'income' ? '+' : '-'}{parseFloat(t.amount).toFixed(2)} DH</span>
-                    <span className="text-gray-600 ml-2">{t.category}</span>
+                    <span className="ml-2 text-gray-600">{t.category}</span>
                 </div>
                 <div className="flex items-center">
                     <span className="text-xs text-gray-500 mr-3">{t.date}</span>
@@ -862,13 +862,74 @@ const IncomeExpenseFeed = ({ userId }) => {
 };
 
 
-// Placeholder for Skill Hours Log
+// Skill Hours Log - Fully Implemented with Firestore Integration
 const SkillHoursLog = ({ userId }) => {
+  const [skills, setSkills] = useState([]);
+  const [skillLogs, setSkillLogs] = useState([]);
+  const [loadingSkills, setLoadingSkills] = useState(true);
+  const [loadingLogs, setLoadingLogs] = useState(true);
+  const [newSkillName, setNewSkillName] = useState('');
+  const [addSkillError, setAddSkillError] = useState(null);
+  const [editingSkillId, setEditingSkillId] = useState(null);
+  const [editingSkillName, setEditingSkillName] = useState('');
+
   const [logging, setLogging] = useState(false);
-  const [skill, setSkill] = useState('');
+  const [selectedSkillId, setSelectedSkillId] = useState('');
   const [startTime, setStartTime] = useState(null);
   const [elapsedTime, setElapsedTime] = useState(0); // in seconds
+  const [logError, setLogError] = useState(null);
 
+  // Fetch skills from Firestore on component mount
+  useEffect(() => {
+    const fetchSkills = async () => {
+      if (!userId) return;
+      setLoadingSkills(true);
+      try {
+        const skillsCollectionRef = collection(db, 'users', userId, 'skills');
+        const skillsSnapshot = await getDocs(skillsCollectionRef);
+        const skillsData = skillsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setSkills(skillsData);
+        setAddSkillError(null);
+      } catch (error) {
+        console.error("Error fetching skills: ", error);
+        setAddSkillError("Failed to load skills.");
+      } finally {
+        setLoadingSkills(false);
+      }
+    };
+
+    fetchSkills();
+  }, [userId]); // Refetch if userId changes
+
+   // Fetch skill logs from Firestore on component mount
+   useEffect(() => {
+       const fetchSkillLogs = async () => {
+           if (!userId) return;
+           setLoadingLogs(true);
+           try {
+               const skillLogsCollectionRef = collection(db, 'users', userId, 'skillLogs');
+               const q = query(skillLogsCollectionRef, orderBy('timestamp', 'desc'));
+               const logsSnapshot = await getDocs(q);
+               const logsData = logsSnapshot.docs.map(doc => ({
+                   id: doc.id,
+                   ...doc.data(),
+                   timestamp: doc.data().timestamp.toDate(), // Convert Timestamp to Date object
+               }));
+               setSkillLogs(logsData);
+               setLogError(null);
+           } catch (error) {
+               console.error("Error fetching skill logs: ", error);
+               setLogError("Failed to load skill logs.");
+           } finally {
+               setLoadingLogs(false);
+           }
+       };
+
+       fetchSkillLogs();
+   }, [userId]); // Refetch if userId changes
+
+
+  // Timer logic
   useEffect(() => {
     let timer;
     if (logging) {
@@ -881,85 +942,357 @@ const SkillHoursLog = ({ userId }) => {
     return () => clearInterval(timer);
   }, [logging, startTime]);
 
+  // Helper to format time from seconds to HH:MM:SS
+  const formatTime = (totalSeconds) => {
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    return `${h}h ${m}m ${s}s`;
+  };
+
+  // Calculate total time per skill
+  const totalTimePerSkill = skillLogs.reduce((totals, log) => {
+      totals[log.skillId] = (totals[log.skillId] || 0) + log.durationSeconds;
+      return totals;
+  }, {});
+
+   // Add a new skill
+   const addSkill = async () => {
+       if (!userId || !newSkillName.trim()) {
+           setAddSkillError("Please enter a skill name.");
+           return;
+       }
+
+       setAddSkillError(null);
+
+       const newSkill = {
+           name: newSkillName.trim(),
+           createdAt: new Date(),
+       };
+
+       try {
+           const docRef = await addDoc(collection(db, 'users', userId, 'skills'), newSkill);
+           setSkills([...skills, { id: docRef.id, ...newSkill }]);
+           setNewSkillName('');
+           console.log("New skill added with ID: ", docRef.id);
+       } catch (error) {
+           console.error("Error adding skill: ", error);
+           setAddSkillError("Failed to add skill. Please try again.");
+       }
+   };
+
+    // Start editing a skill
+    const startEditingSkill = (skill) => {
+        setEditingSkillId(skill.id);
+        setEditingSkillName(skill.name);
+    };
+
+    // Cancel editing skill
+    const cancelEditingSkill = () => {
+        setEditingSkillId(null);
+        setEditingSkillName('');
+        setAddSkillError(null);
+    };
+
+    // Save edited skill
+    const saveEditedSkill = async (id) => {
+        if (!editingSkillName.trim()) {
+            setAddSkillError("Skill name cannot be empty.");
+            return;
+        }
+
+        setAddSkillError(null);
+
+        const skillDocRef = doc(db, 'users', userId, 'skills', id);
+        try {
+            await updateDoc(skillDocRef, {
+                name: editingSkillName.trim(),
+            });
+            setSkills(skills.map(skill =>
+                skill.id === id ? { ...skill, name: editingSkillName.trim() } : skill
+            ));
+            console.log(`Skill ${id} updated in Firestore`);
+            cancelEditingSkill();
+        } catch (error) {
+            console.error("Error saving edited skill: ", error);
+            setAddSkillError("Failed to save skill. Please try again.");
+        }
+    };
+
+    // Delete a skill
+    const deleteSkill = async (id) => {
+        if (window.confirm("Are you sure you want to delete this skill? This will also delete all associated logs.")) {
+            const skillDocRef = doc(db, 'users', userId, 'skills', id);
+            try {
+                // Optional: Delete associated logs first (requires querying and batch deletes)
+                const logsToDeleteQuery = query(collection(db, 'users', userId, 'skillLogs'), where('skillId', '==', id));
+                const logsToDeleteSnapshot = await getDocs(logsToDeleteQuery);
+                const batch = db.batch();
+                logsToDeleteSnapshot.docs.forEach(doc => {
+                    batch.delete(doc.ref);
+                });
+                await batch.commit();
+                console.log(`Deleted ${logsToDeleteSnapshot.size} associated logs.`);
+
+                await deleteDoc(skillDocRef);
+                setSkills(skills.filter(skill => skill.id !== id));
+                // Also remove associated logs from local state
+                setSkillLogs(skillLogs.filter(log => log.skillId !== id));
+                console.log(`Skill ${id} deleted`);
+                setAddSkillError(null);
+            } catch (error) {
+                console.error("Error deleting skill: ", error);
+                setAddSkillError("Failed to delete skill.");
+            }
+        }
+    };
+
+
   const startLogging = () => {
-    if (skill) {
+    if (selectedSkillId && !logging) {
       setLogging(true);
       setStartTime(Date.now());
       setElapsedTime(0);
-    } else {
-      alert('Please select a skill first.'); // Use a modal in a real app
+      setLogError(null); // Clear previous log errors
+    } else if (!selectedSkillId) {
+      setLogError('Please select a skill to start logging.'); // Use a modal in a real app
     }
   };
 
   const stopLogging = async () => {
     setLogging(false);
-    // Log the time for the selected skill to Firestore
-    if (userId && skill && elapsedTime > 0) {
+    const duration = Math.floor((Date.now() - startTime) / 1000);
+
+    if (userId && selectedSkillId && duration > 0) {
+        const newLog = {
+            skillId: selectedSkillId,
+            durationSeconds: duration,
+            timestamp: new Date(), // Store as Firestore Timestamp
+        };
         try {
-            await setDoc(doc(collection(db, 'users', userId, 'skillLogs')), {
-                skill: skill,
-                durationSeconds: elapsedTime,
-                timestamp: new Date(),
-            });
-            console.log(`Logged ${elapsedTime} seconds for ${skill} to Firestore`);
+            const docRef = await addDoc(collection(db, 'users', userId, 'skillLogs'), newLog);
+            // Add the new log to local state and re-sort
+            setSkillLogs([{...newLog, id: docRef.id}, ...skillLogs]);
+            console.log(`Logged ${duration} seconds for skill ${selectedSkillId} with ID: ${docRef.id}`);
+            setLogError(null); // Clear error on success
         } catch (error) {
             console.error("Error logging skill hours: ", error);
-            alert("Failed to log skill hours. Please try again.");
+            setLogError("Failed to log skill hours. Please try again.");
         }
+    } else if (duration <= 0) {
+         setLogError("Timer ran for less than 1 second. Not logging.");
     }
-    setSkill('');
+
+    setSelectedSkillId('');
     setElapsedTime(0);
     setStartTime(null);
   };
 
-  const formatTime = (seconds) => {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return `${h}h ${m}m ${s}s`;
-  };
+    // Delete a skill log entry
+    const deleteLog = async (logId) => {
+        if (window.confirm("Are you sure you want to delete this log entry?")) {
+            const logDocRef = doc(db, 'users', userId, 'skillLogs', logId);
+            try {
+                await deleteDoc(logDocRef);
+                setSkillLogs(skillLogs.filter(log => log.id !== logId));
+                console.log(`Skill log ${logId} deleted`);
+                setLogError(null);
+            } catch (error) {
+                console.error("Error deleting skill log: ", error);
+                setLogError("Failed to delete skill log entry.");
+            }
+        }
+    };
 
 
   return (
     <DashboardCard title="Skill Hours Log">
-      <div className="flex items-center mb-4">
-        <select
-          className="p-2 border-b border-gray-300 focus:outline-none focus:border-[#005F99] mr-4"
-          value={skill}
-          onChange={(e) => setSkill(e.target.value)}
-          disabled={logging}
-        >
-          <option value="">Select Skill</option>
-          <option value="Coding">Coding</option>
-          <option value="Design">Design</option>
-          <option value="English">English</option>
-        </select>
-        {!logging ? (
-          <button
-            onClick={startLogging}
-            className="bg-[#005F99] text-white px-4 py-2 rounded-md hover:bg-blue-700 transition duration-200 disabled:opacity-50"
-            disabled={!skill}
+        {/* Skill Management Section */}
+        <div className="mb-6 p-4 border border-gray-200 rounded-md bg-gray-50">
+            <h4 className="font-semibold mb-3 text-[#333333]">Manage Skills</h4>
+            {/* Add New Skill Form */}
+            <div className="flex items-center gap-2 mb-4">
+                <input
+                    type="text"
+                    placeholder="Add new skill"
+                    className="flex-grow p-2 border-b border-gray-300 focus:outline-none focus:border-[#005F99] text-sm rounded-md"
+                    value={newSkillName}
+                    onChange={(e) => setNewSkillName(e.target.value)}
+                    onKeyPress={(e) => { if (e.key === 'Enter') addSkill(); }}
+                    disabled={editingSkillId !== null || loadingSkills}
+                />
+                <button
+                    onClick={addSkill}
+                    className="bg-gray-200 text-[#333333] px-4 py-2 rounded-md hover:bg-gray-300 transition duration-200 text-sm disabled:opacity-50"
+                    disabled={!newSkillName.trim() || editingSkillId !== null || loadingSkills}
+                >
+                    Add Skill
+                </button>
+            </div>
+            {addSkillError && <p className="text-red-500 text-sm mt-2">{addSkillError}</p>}
+
+            {/* Skills List */}
+            {loadingSkills ? (
+                 <p className="text-gray-600 text-sm">Loading skills...</p>
+            ) : skills.length === 0 ? (
+                 <p className="text-gray-600 text-sm">No skills added yet.</p>
+            ) : (
+                <div className="space-y-2 text-sm">
+                    {skills.map(skill => (
+                        <div key={skill.id} className="flex items-center justify-between py-1 border-b border-gray-100 last:border-b-0">
+                            {editingSkillId === skill.id ? (
+                                // Edit mode
+                                <div className="flex items-center flex-grow mr-2">
+                                    <input
+                                        type="text"
+                                        value={editingSkillName}
+                                        onChange={(e) => setEditingSkillName(e.target.value)}
+                                        className="flex-grow p-1 border-b border-gray-300 focus:outline-none focus:border-[#005F99] text-sm rounded-md"
+                                        onKeyPress={(e) => { if (e.key === 'Enter') saveEditedSkill(skill.id); }}
+                                    />
+                                    <button
+                                        onClick={() => saveEditedSkill(skill.id)}
+                                        className="ml-2 text-green-600 hover:text-green-800 text-sm p-1 rounded-md hover:bg-gray-100"
+                                        title="Save"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M0 2C0 .9.9 0 2 0h14l4 4v14c0 1.1-.9 2-2 2H2c-1.1 0-2-.9-2-2V2zm5 0v5h10V2H5zm0 8v8h10v-8H5z"/></svg>
+                                    </button>
+                                    <button
+                                        onClick={cancelEditingSkill}
+                                        className="ml-2 text-gray-500 hover:text-gray-700 text-sm p-1 rounded-md hover:bg-gray-100"
+                                        title="Cancel"
+                                    >
+                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+                                    </button>
+                                </div>
+                            ) : (
+                                // Display mode
+                                <span className="flex-grow">{skill.name}</span>
+                            )}
+                            {editingSkillId !== skill.id && (
+                                <div className="flex items-center ml-2">
+                                     <button
+                                        onClick={() => startEditingSkill(skill)}
+                                        className="text-blue-500 hover:text-blue-700 text-sm p-1 rounded-md hover:bg-gray-100 mr-1"
+                                        title="Edit Skill"
+                                    >
+                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" /></svg>
+                                    </button>
+                                    <button
+                                        onClick={() => deleteSkill(skill.id)}
+                                        className="text-red-500 hover:text-red-700 text-sm p-1 rounded-md hover:bg-gray-100"
+                                        title="Delete Skill"
+                                    >
+                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 011-1h4a1 1 0 110 2H8a1 1 0 01-1-1zm1 3a1 1 0 100 2h4a1 1 0 100-2H8z" clipRule="evenodd" /></svg>
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+
+        {/* Timer Section */}
+      <div className="mb-6 p-4 border border-gray-200 rounded-md bg-gray-50">
+        <h4 className="font-semibold mb-3 text-[#333333]">Log Skill Time</h4>
+        <div className="flex items-center mb-4 gap-4"> {/* Added gap */}
+          <select
+            className="flex-grow p-2 border-b border-gray-300 focus:outline-none focus:border-[#005F99] text-sm rounded-md"
+            value={selectedSkillId}
+            onChange={(e) => setSelectedSkillId(e.target.value)}
+            disabled={logging || loadingSkills || skills.length === 0}
           >
-            Start Timer
-          </button>
-        ) : (
-          <button
-            onClick={stopLogging}
-            className="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-700 transition duration-200"
-          >
-            Stop Timer
-          </button>
+            <option value="">Select Skill</option>
+            {skills.map(skill => (
+                <option key={skill.id} value={skill.id}>{skill.name}</option>
+            ))}
+          </select>
+          {!logging ? (
+            <button
+              onClick={startLogging}
+              className="bg-[#005F99] text-white px-4 py-2 rounded-md hover:bg-blue-700 transition duration-200 text-sm disabled:opacity-50"
+              disabled={!selectedSkillId || logging}
+            >
+              Start Timer
+            </button>
+          ) : (
+            <button
+              onClick={stopLogging}
+              className="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-700 transition duration-200 text-sm"
+            >
+              Stop Timer
+            </button>
+          )}
+        </div>
+        {logging && (
+          <p className="text-lg font-bold text-[#333333]">Logging: {skills.find(s => s.id === selectedSkillId)?.name || 'Unknown Skill'} - {formatTime(elapsedTime)}</p>
         )}
+         {logError && <p className="text-red-500 text-sm mt-2">{logError}</p>}
       </div>
-      {logging && (
-        <p className="text-lg font-bold text-[#333333]">Logging: {skill} - {formatTime(elapsedTime)}</p>
-      )}
-      {/* Weekly/Monthly charts would go here, fetching data from Firestore */}
+
+        {/* Total Time per Skill Section */}
+        <div className="mb-6 p-4 border border-gray-200 rounded-md bg-gray-50">
+             <h4 className="font-semibold mb-3 text-[#333333]">Total Time per Skill</h4>
+             {loadingLogs ? (
+                 <p className="text-gray-600 text-sm">Calculating totals...</p>
+             ) : Object.keys(totalTimePerSkill).length === 0 ? (
+                 <p className="text-gray-600 text-sm">No time logged yet to calculate totals.</p>
+             ) : (
+                 <div className="space-y-2 text-sm">
+                     {Object.entries(totalTimePerSkill).map(([skillId, totalSeconds]) => {
+                         const skill = skills.find(s => s.id === skillId);
+                         if (!skill) return null; // Don't display if skill is deleted
+                         return (
+                             <div key={skillId} className="flex justify-between py-1 border-b border-gray-100 last:border-b-0">
+                                 <span className="font-semibold">{skill.name}:</span>
+                                 <span>{formatTime(totalSeconds)}</span>
+                             </div>
+                         );
+                     })}
+                 </div>
+             )}
+        </div>
+
+
+        {/* Log History Section */}
+        <div className="p-4 border border-gray-200 rounded-md bg-gray-50">
+             <h4 className="font-semibold mb-3 text-[#333333]">Log History</h4>
+             {loadingLogs ? (
+                 <p className="text-gray-600 text-sm">Loading log history...</p>
+             ) : skillLogs.length === 0 ? (
+                 <p className="text-gray-600 text-sm">No log entries yet.</p>
+             ) : (
+                 <div className="space-y-3 text-sm">
+                     {skillLogs.map(log => {
+                         const skill = skills.find(s => s.id === log.skillId);
+                         if (!skill) return null; // Don't display logs for deleted skills
+                         return (
+                             <div key={log.id} className="flex justify-between items-center py-2 border-b border-gray-100 last:border-b-0">
+                                 <div>
+                                     <span className="font-semibold">{skill.name}:</span>
+                                     <span className="ml-2 text-gray-700">{formatTime(log.durationSeconds)}</span>
+                                     <span className="ml-4 text-xs text-gray-500">{log.timestamp.toLocaleString()}</span> {/* Display formatted date/time */}
+                                 </div>
+                                  <button
+                                        onClick={() => deleteLog(log.id)}
+                                        className="text-red-500 hover:text-red-700 text-sm p-1 rounded-md hover:bg-gray-100"
+                                        title="Delete Log Entry"
+                                    >
+                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 011-1h4a1 1 0 110 2H8a1 1 0 01-1-1zm1 3a1 1 0 100 2h4a1 1 0 100-2H8z" clipRule="evenodd" /></svg>
+                                    </button>
+                             </div>
+                         );
+                     })}
+                 </div>
+             )}
+        </div>
+
     </DashboardCard>
   );
 };
 
-// Placeholder for MVP Test Launcher
+// Define components before App uses them
 const MVPTestLauncher = ({ userId }) => {
   const [hypothesis, setHypothesis] = useState('');
   const [targetMetric, setTargetMetric] = useState('');
@@ -1061,7 +1394,6 @@ const MVPTestLauncher = ({ userId }) => {
   );
 };
 
-// Personal Brand Feed - Fully working with Firebase
 const PersonalBrandFeed = ({ userId }) => {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);

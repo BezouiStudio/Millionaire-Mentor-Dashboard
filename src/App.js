@@ -11,7 +11,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyDckbiZIwbBujJAhovQhGQiL_SQReBWDu0",
   authDomain: "millionaire-mentor-dashboard.firebaseapp.com",
   projectId: "millionaire-mentor-dashboard",
-  storageBucket: "millionaire-mentor-dashboard.firebasestorage.app",
+  storageBucket: "millionaire-mentor-dashboard.firebaseapp.com",
   messagingSenderId: "197110069768",
   appId: "1:197110069768:web:4ad8808c96a99c785cefbd",
   measurementId: "G-HX97C4LNLQ"
@@ -135,16 +135,45 @@ const GoalsWizard = ({ userId, onGoalsSet }) => {
   );
 };
 
-// Placeholder for the Milestone Roadmap UI
+// Milestone Roadmap - Fully Implemented with Firestore
 const MilestoneRoadmap = ({ userId }) => {
-   // This would fetch roadmap data from the backend (or Firestore)
-   // For now, using static data as placeholder
-  const milestones = [
-    { id: 1, quarter: 'Q1 2025', goal: '$10k Net Worth', status: 'in progress' },
-    { id: 2, quarter: 'Q2 2025', goal: '$25k Net Worth', status: 'not started' },
-    { id: 3, quarter: 'Q3 2025', goal: '$50k Net Worth', status: 'not started' },
-    // ... more milestones fetched from Firebase
-  ];
+  const [milestones, setMilestones] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newMilestoneQuarter, setNewMilestoneQuarter] = useState('');
+  const [newMilestoneGoal, setNewMilestoneGoal] = useState('');
+  const [addError, setAddError] = useState(null);
+  const [editingMilestoneId, setEditingMilestoneId] = useState(null);
+  const [editingMilestoneQuarter, setEditingMilestoneQuarter] = useState('');
+  const [editingMilestoneGoal, setEditingMilestoneGoal] = useState('');
+  const [editingMilestoneStatus, setEditingMilestoneStatus] = useState('');
+
+
+  // Fetch milestones from Firestore on component mount
+  useEffect(() => {
+    const fetchMilestones = async () => {
+      if (!userId) return;
+      setLoading(true);
+      try {
+        const milestonesCollectionRef = collection(db, 'users', userId, 'milestones');
+        // Order by quarter or a specific date field if available
+        const q = query(milestonesCollectionRef, orderBy('quarter')); // Assuming 'quarter' can be ordered lexicographically
+        const milestonesSnapshot = await getDocs(q);
+        const milestonesData = milestonesSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setMilestones(milestonesData);
+        setAddError(null);
+      } catch (error) {
+        console.error("Error fetching milestones: ", error);
+        setAddError("Failed to load roadmap milestones.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchMilestones();
+  }, [userId]); // Refetch if userId changes
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -155,18 +184,223 @@ const MilestoneRoadmap = ({ userId }) => {
     }
   };
 
+   // Add a new milestone
+   const addMilestone = async () => {
+       if (!userId || !newMilestoneQuarter.trim() || !newMilestoneGoal.trim()) {
+           setAddError("Please fill out Quarter and Goal.");
+           return;
+       }
+
+       setAddError(null);
+
+       const newMilestone = {
+           quarter: newMilestoneQuarter.trim(),
+           goal: newMilestoneGoal.trim(),
+           status: 'not started', // Default status
+           createdAt: new Date(),
+       };
+
+       try {
+           const docRef = await addDoc(collection(db, 'users', userId, 'milestones'), newMilestone);
+           // Add the new milestone to local state and re-sort
+           const milestonesCollectionRef = collection(db, 'users', userId, 'milestones');
+           const q = query(milestonesCollectionRef, orderBy('quarter'));
+           const milestonesSnapshot = await getDocs(q);
+           const milestonesData = milestonesSnapshot.docs.map(doc => ({
+             id: doc.id,
+             ...doc.data(),
+           }));
+           setMilestones(milestonesData);
+
+           setNewMilestoneQuarter('');
+           setNewMilestoneGoal('');
+           console.log("New milestone added with ID: ", docRef.id);
+       } catch (error) {
+           console.error("Error adding milestone: ", error);
+           setAddError("Failed to add milestone. Please try again.");
+       }
+   };
+
+    // Start editing a milestone
+    const startEditingMilestone = (milestone) => {
+        setEditingMilestoneId(milestone.id);
+        setEditingMilestoneQuarter(milestone.quarter);
+        setEditingMilestoneGoal(milestone.goal);
+        setEditingMilestoneStatus(milestone.status);
+    };
+
+    // Cancel editing milestone
+    const cancelEditingMilestone = () => {
+        setEditingMilestoneId(null);
+        setEditingMilestoneQuarter('');
+        setEditingMilestoneGoal('');
+        setEditingMilestoneStatus('');
+        setAddError(null);
+    };
+
+    // Save edited milestone
+    const saveEditedMilestone = async (id) => {
+        if (!editingMilestoneQuarter.trim() || !editingMilestoneGoal.trim()) {
+            setAddError("Quarter and Goal cannot be empty.");
+            return;
+        }
+
+        setAddError(null);
+
+        const milestoneDocRef = doc(db, 'users', userId, 'milestones', id);
+        try {
+            await updateDoc(milestoneDocRef, {
+                quarter: editingMilestoneQuarter.trim(),
+                goal: editingMilestoneGoal.trim(),
+                status: editingMilestoneStatus,
+            });
+            // Update local state and re-sort
+            const milestonesCollectionRef = collection(db, 'users', userId, 'milestones');
+            const q = query(milestonesCollectionRef, orderBy('quarter'));
+            const milestonesSnapshot = await getDocs(q);
+            const milestonesData = milestonesSnapshot.docs.map(doc => ({
+              id: doc.id,
+              ...doc.data(),
+            }));
+            setMilestones(milestonesData);
+
+            console.log(`Milestone ${id} updated in Firestore`);
+            cancelEditingMilestone();
+        } catch (error) {
+            console.error("Error saving edited milestone: ", error);
+            setAddError("Failed to save milestone. Please try again.");
+        }
+    };
+
+    // Delete a milestone
+    const deleteMilestone = async (id) => {
+        if (window.confirm("Are you sure you want to delete this milestone?")) {
+            const milestoneDocRef = doc(db, 'users', userId, 'milestones', id);
+            try {
+                await deleteDoc(milestoneDocRef);
+                setMilestones(milestones.filter(milestone => milestone.id !== id));
+                console.log(`Milestone ${id} deleted`);
+                setAddError(null);
+            } catch (error) {
+                console.error("Error deleting milestone: ", error);
+                setAddError("Failed to delete milestone.");
+            }
+        }
+    };
+
+
   return (
     <div className="p-4">
       <h2 className="text-xl font-bold text-[#333333] mb-4">Roadmap</h2>
-      <div className="space-y-4">
-        {milestones.map(milestone => (
-          <div key={milestone.id} className={`p-3 rounded-md shadow-sm ${getStatusColor(milestone.status)} text-white`}>
-            <p className="font-bold">{milestone.quarter}</p>
-            <p className="text-sm">{milestone.goal}</p>
-            {/* Drag-and-drop functionality would be added here */}
-          </div>
-        ))}
+
+      {/* Add New Milestone Form */}
+      <div className="mb-6 p-4 border border-gray-200 rounded-md bg-gray-50">
+        <h4 className="font-semibold mb-3 text-[#333333]">Add New Milestone</h4>
+        <div className="grid grid-cols-1 gap-4 mb-4">
+          <input
+            type="text"
+            placeholder="Quarter (e.g., Q1 2025)"
+            className="p-2 border-b border-gray-300 focus:outline-none focus:border-[#005F99] text-sm rounded-md"
+            value={newMilestoneQuarter}
+            onChange={(e) => setNewMilestoneQuarter(e.target.value)}
+            disabled={editingMilestoneId !== null || loading}
+          />
+          <input
+            type="text"
+            placeholder="Goal (e.g., $10k Net Worth)"
+            className="p-2 border-b border-gray-300 focus:outline-none focus:border-[#005F99] text-sm rounded-md"
+            value={newMilestoneGoal}
+            onChange={(e) => setNewMilestoneGoal(e.target.value)}
+            disabled={editingMilestoneId !== null || loading}
+          />
+        </div>
+        {addError && <p className="text-red-500 text-sm mb-4">{addError}</p>}
+        <button
+          onClick={addMilestone}
+          className="bg-gray-200 text-[#333333] px-4 py-2 rounded-md hover:bg-gray-300 transition duration-200 text-sm disabled:opacity-50 flex items-center justify-center"
+          disabled={!newMilestoneQuarter.trim() || !newMilestoneGoal.trim() || editingMilestoneId !== null || loading}
+          title="Add Milestone"
+        >
+             {/* Plus Icon */}
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
+            </svg>
+        </button>
       </div>
+
+
+      {loading ? (
+          <p className="text-gray-600">Loading roadmap...</p>
+      ) : milestones.length === 0 ? (
+          <p className="text-gray-600">No milestones added yet.</p>
+      ) : (
+          <div className="space-y-4">
+            {milestones.map(milestone => (
+              <div key={milestone.id} className={`p-3 rounded-md shadow-sm ${getStatusColor(milestone.status)} text-white`}>
+                {editingMilestoneId === milestone.id ? (
+                    // Edit mode
+                    <div className="space-y-2">
+                        <input
+                            type="text"
+                            value={editingMilestoneQuarter}
+                            onChange={(e) => setEditingMilestoneQuarter(e.target.value)}
+                            className="w-full p-1 border-b border-gray-300 focus:outline-none focus:border-[#005F99] text-sm rounded-md text-[#333333]"
+                        />
+                        <input
+                            type="text"
+                            value={editingMilestoneGoal}
+                            onChange={(e) => setEditingMilestoneGoal(e.target.value)}
+                            className="w-full p-1 border-b border-gray-300 focus:outline-none focus:border-[#005F99] text-sm rounded-md text-[#333333]"
+                        />
+                        <select
+                            value={editingMilestoneStatus}
+                            onChange={(e) => setEditingMilestoneStatus(e.target.value)}
+                            className="w-full p-1 border-b border-gray-300 focus:outline-none focus:border-[#005F99] text-sm rounded-md text-[#333333]"
+                        >
+                            <option value="not started">Not Started</option>
+                            <option value="in progress">In Progress</option>
+                            <option value="complete">Complete</option>
+                        </select>
+                        <div className="flex gap-2 mt-2">
+                            <button
+                                onClick={() => saveEditedMilestone(milestone.id)}
+                                className="bg-green-600 text-white text-sm px-3 py-1 rounded-md hover:bg-green-700 transition duration-200"
+                            >
+                                Save
+                            </button>
+                             <button
+                                onClick={cancelEditingMilestone}
+                                className="bg-gray-500 text-white text-sm px-3 py-1 rounded-md hover:bg-gray-600 transition duration-200"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    // Display mode
+                    <>
+                        <p className="font-bold">{milestone.quarter}</p>
+                        <p className="text-sm">{milestone.goal}</p>
+                         <div className="flex gap-2 mt-2">
+                            <button
+                                onClick={() => startEditingMilestone(milestone)}
+                                className="text-white text-sm px-3 py-1 rounded-md border border-white hover:bg-white hover:text-[#333333] transition duration-200"
+                            >
+                                Edit
+                            </button>
+                             <button
+                                onClick={() => deleteMilestone(milestone.id)}
+                                className="text-white text-sm px-3 py-1 rounded-md border border-white hover:bg-white hover:text-red-600 transition duration-200"
+                            >
+                                Delete
+                            </button>
+                        </div>
+                    </>
+                )}
+              </div>
+            ))}
+          </div>
+      )}
     </div>
   );
 };

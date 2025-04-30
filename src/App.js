@@ -631,6 +631,24 @@ const WeeklyActionCards = ({ userId }) => {
   );
 };
 
+// Helper function to check if a date is today
+const isToday = (date) => {
+  const today = new Date();
+  return date.getDate() === today.getDate() &&
+         date.getMonth() === today.getMonth() &&
+         date.getFullYear() === today.getFullYear();
+};
+
+// Helper function to check if a date was yesterday
+const isYesterday = (date) => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    return date.getDate() === yesterday.getDate() &&
+           date.getMonth() === yesterday.getMonth() &&
+           date.getFullYear() === yesterday.getFullYear();
+};
+
+
 // Daily Habit Tracker - Now saves to Firebase with Edit/Delete and improved UI
 const DailyHabitTracker = ({ userId }) => {
   const [habits, setHabits] = useState([]);
@@ -648,7 +666,17 @@ const DailyHabitTracker = ({ userId }) => {
       try {
         const habitsCollectionRef = collection(db, 'users', userId, 'habits');
         const habitsSnapshot = await getDocs(habitsCollectionRef);
-        const habitsData = habitsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const habitsData = habitsSnapshot.docs.map(doc => {
+          const data = doc.data();
+          const lastCheckedDate = data.lastChecked ? data.lastChecked.toDate() : null;
+          const checkedToday = lastCheckedDate ? isToday(lastCheckedDate) : false;
+          return {
+            id: doc.id,
+            ...data,
+            checked: checkedToday, // Set checked based on if it was checked today
+            lastChecked: lastCheckedDate // Keep lastChecked as Date object for comparison
+          };
+        });
         setHabits(habitsData);
         setAddError(null); // Clear any previous errors on successful fetch
       } catch (error) {
@@ -665,35 +693,53 @@ const DailyHabitTracker = ({ userId }) => {
 
   const handleCheck = async (id) => {
     const habitToUpdate = habits.find(habit => habit.id === id);
-    if (!habitToUpdate) return;
+    if (!habitToUpdate || habitToUpdate.checked) { // Prevent checking if already checked today
+        console.log("Habit already checked today or not found.");
+        return;
+    }
 
-    const newCheckedStatus = !habitToUpdate.checked;
-    // Simple streak logic: increment if checked, reset if unchecked
-    const newStreak = newCheckedStatus ? habitToUpdate.streak + 1 : 0;
+    const currentDate = new Date();
+    const lastCheckedDate = habitToUpdate.lastChecked;
+    let newStreak = habitToUpdate.streak;
+
+    if (lastCheckedDate && isYesterday(lastCheckedDate)) {
+        // Checked yesterday, continue streak
+        newStreak += 1;
+    } else if (lastCheckedDate && !isToday(lastCheckedDate)) {
+        // Checked before yesterday, reset streak
+        newStreak = 1;
+    } else if (!lastCheckedDate) {
+        // First time checking, start streak
+        newStreak = 1;
+    }
+    // If lastCheckedDate was today, the check above (habitToUpdate.checked) prevents this block from running.
 
     // Optimistically update local state
     setHabits(habits.map(habit =>
-        habit.id === id ? { ...habit, checked: newCheckedStatus, streak: newStreak } : habit
+        habit.id === id ? { ...habit, checked: true, streak: newStreak, lastChecked: currentDate } : habit
     ));
 
     // Update habit in Firestore
     const habitDocRef = doc(db, 'users', userId, 'habits', id);
     try {
       await updateDoc(habitDocRef, {
-        checked: newCheckedStatus,
+        checked: true, // Always set to true when checked
         streak: newStreak,
-        lastChecked: newCheckedStatus ? new Date() : null, // Track last checked date
+        lastChecked: currentDate, // Store current date
       });
-      console.log(`Habit ${id} updated in Firestore`);
+      console.log(`Habit ${id} updated in Firestore. New streak: ${newStreak}`);
       setAddError(null); // Clear any add errors on successful update
     } catch (error) {
       console.error("Error updating habit: ", error);
       // Revert local state if Firestore update fails
-      setHabits(habits.map(habit =>
-          habit.id === id ? { ...habit, checked: !newCheckedStatus, streak: habitToUpdate.streak } : habit // Revert to original streak
-      ));
-      // Set a specific error state for updating if needed, or reuse addError
+      // This is tricky with streak logic, might need a full re-fetch or more complex state management
+      // For simplicity here, I'll just log the error and inform the user.
+      // A more robust app might revert the specific habit's state or re-fetch.
       setAddError("Failed to update habit. Please try again."); // Set error state
+       // Revert optimistic update on error
+       setHabits(habits.map(habit =>
+           habit.id === id ? { ...habit, checked: false, streak: habitToUpdate.streak, lastChecked: habitToUpdate.lastChecked } : habit
+       ));
     }
   };
 
@@ -708,10 +754,10 @@ const DailyHabitTracker = ({ userId }) => {
 
       const newHabit = {
           name: newHabitName.trim(), // Use name from input
-          checked: false,
+          checked: false, // New habits are initially unchecked
           streak: 0,
           createdAt: new Date(),
-          lastChecked: null,
+          lastChecked: null, // No last checked date initially
       };
 
       try {
@@ -837,6 +883,7 @@ const DailyHabitTracker = ({ userId }) => {
                         checked={habit.checked}
                         onChange={() => handleCheck(habit.id)}
                         className="mr-3 h-5 w-5 text-[#005F99] rounded focus:ring-[#005F99]"
+                        disabled={habit.checked} // Disable checkbox if already checked today
                       />
                       <span className={`text-[#333333] ${habit.checked ? 'line-through' : ''}`}>{habit.name}</span>
                     </label>
@@ -2149,11 +2196,13 @@ const App = () => {
 
       <div className="container mx-auto px-6 grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Sidebar for Roadmap (visible on Tablet/Desktop) */}
-        <aside className="lg:col-span-1 hidden lg:block">
+        {/* Removed hidden lg:block to make it visible on all screen sizes */}
+        <aside className="lg:col-span-1">
           <MilestoneRoadmap userId={user.uid} />
         </aside>
 
         {/* Main Content Area */}
+        {/* Adjusted grid classes to accommodate the roadmap on smaller screens */}
         <main className="lg:col-span-3">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Top row of cards */}
